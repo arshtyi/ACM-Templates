@@ -1,0 +1,88 @@
+name: Build Typst Document
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a GitHub Release"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: typst-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Fontist
+        uses: fontist/setup-fontist@v2
+
+      - name: Install fonts with Fontist
+        run: fontist install "IBM Plex Serif" "JetBrains Mono" "Noto Serif CJK SC" --newest -a -h
+
+      - name: Setup Typst
+        uses: typst-community/setup-typst@v4
+        with:
+          cache-dependency-path: dependency.typ
+
+      - name: Compile Typst document
+        run: typst compile main.typ acm-templates@arshtyi.pdf --font-path ~/.fontist/fonts
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acm-templates-pdf
+          path: acm-templates@arshtyi.pdf
+          if-no-files-found: error
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true' }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: acm-templates-pdf
+          path: .
+
+      - name: Get release metadata
+        id: meta
+        run: |
+          echo "date=$(date +'%Y-%m-%d-%H-%M')" >> $GITHUB_OUTPUT
+          echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.date }}
+          name: Release ${{ steps.meta.outputs.date }}
+          body: |
+            ## Build Information
+
+            This document was manually built and released by GitHub Actions on `${{ steps.meta.outputs.date }}`.
+
+            - **Commit Hash**: `${{ github.sha }}`
+            - **Commit Message**: ${{ steps.meta.outputs.message }}
+
+          files: acm-templates@arshtyi.pdf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
